@@ -1,0 +1,4 @@
+.envrc
+.venv
+*.pyc
+.DS_Store

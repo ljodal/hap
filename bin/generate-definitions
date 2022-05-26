@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+"""
+This script reads the characteristics and services defined by Apple and
+generates Python files from them.
+"""
+import argparse
+import ast
+import pathlib
+import plistlib
+import subprocess
+import sys
+from typing import Any
+
+PROJECT_ROOT = pathlib.Path(__file__).parent.parent.relative_to(
+    pathlib.Path(".").resolve()
+)
+
+
+def to_const_name(name: str) -> str:
+    return name.title().replace(" ", "").replace("-", "").replace(".", "_")
+
+
+PERMISSIONS_MAP = {
+    "aa": "ADDITIONAL_AUTHORIZATION",
+    "hidden": "HIDDEN",
+    "notify": "NOTIFY",
+    "read": "PAIRED_READ",
+    "write": "PAIRED_WRITE",
+    "timedWrite": "TIMED_WRITE",
+    "writeResponse": "WRITE_RESPONSE",
+}
+
+
+def get_permission(prop: str) -> ast.Attribute:
+    attr = PERMISSIONS_MAP[prop]
+    return ast.Attribute(
+        value=ast.Name("Permission"),
+        attr=attr,
+        ctx=ast.Load(),
+    )
+
+
+def get_generic_type(format: str) -> str:
+    if format in ("uint8", "uint16", "uint32", "uint64", "int32"):
+        return "int"
+    if format == "string":
+        return "str"
+    if format in ("data", "tlv8"):
+        return "bytes"
+    if format in ("int", "float", "bool"):
+        return format
+    raise ValueError(f"Unsupported format: {format}")
+
+
+def write_file(path: pathlib.Path, tree: ast.AST) -> None:
+    with open(path, "w") as f:
+        f.write(ast.unparse(tree))
+
+    subprocess.run(["black", path], cwd=PROJECT_ROOT, check=True, capture_output=True)
+    subprocess.run(["isort", path], cwd=PROJECT_ROOT, check=True, capture_output=True)
+
+
+def generate_characteristics(characteristics: list[dict[str, Any]]) -> dict[str, str]:
+
+    path = PROJECT_ROOT / "hap" / "accessories" / "characteristics.py"
+    print(f"🔄 Generating {path} ...")
+
+    module = ast.Module(
+        body=[
+            ast.ImportFrom(module="uuid", names=[ast.alias(name="UUID")], level=0),
+            ast.ImportFrom(
+                module="base",
+                names=[
+                    ast.alias(name="CharacteristicType"),
+                    ast.alias(name="Permission"),
+                ],
+                level=1,
+            ),
+        ],
+        type_ignores=[],
+    )
+
+    uuid_to_const: dict[str, str] = {}
+
+    for characteristic in characteristics:
+        name = characteristic["Name"]
+        uuid = characteristic["UUID"]
+        format = characteristic["Format"]
+        const_name = to_const_name(name)
+        properties = characteristic["Properties"]
+
+        uuid_to_const[uuid] = const_name
+
+        def to_value(value: str) -> Any:
+            if format in ("uint8", "uint16", "uint32", "uint64", "int", "int32"):
+                return int(value)
+            if format == "float":
+                return float(value)
+            return value
+
+        kwargs = [
+            ast.keyword(
+                arg="description",
+                value=ast.Constant(value=name),
+            ),
+            ast.keyword(
+                arg="format",
+                value=ast.Constant(value=format),
+            ),
+            ast.keyword(
+                arg="permissions",
+                value=ast.Tuple(
+                    elts=[
+                        get_permission(prop)
+                        for prop in properties
+                        if prop in PERMISSIONS_MAP
+                    ],
+                    ctx=ast.Load(),
+                ),
+            ),
+        ]
+
+        if unit := characteristic.get("Unit"):
+            kwargs.append(ast.keyword(arg="unit", value=ast.Constant(value=unit)))
+
+        if constraints := characteristic.get("Constraints"):
+            if (min_value := constraints.get("MinimumValue")) is not None:
+                kwargs.append(
+                    ast.keyword(arg="min_value", value=ast.Constant(value=min_value))
+                )
+            if (max_value := constraints.get("MaximumValue")) is not None:
+                kwargs.append(
+                    ast.keyword(arg="max_value", value=ast.Constant(value=max_value))
+                )
+
+            if (min_step := constraints.get("StepValue")) is not None:
+                kwargs.append(
+                    ast.keyword(arg="min_step", value=ast.Constant(value=min_step))
+                )
+            if valid_values := constraints.get("ValidValues"):
+                kwargs.append(
+                    ast.keyword(
+                        arg="valid_values",
+                        value=ast.Tuple(
+                            elts=[
+                                ast.Constant(value=to_value(key))
+                                for key in valid_values
+                            ]
+                        ),
+                        ctx=ast.Load(),
+                    )
+                )
+            if (max_length := constraints.get("MaximumLength")) is not None:
+                kwargs.append(
+                    ast.keyword(arg="max_length", value=ast.Constant(value=max_length))
+                )
+
+        expression = ast.Call(
+            func=ast.Subscript(
+                value=ast.Name("CharacteristicType"),
+                slice=ast.Name(get_generic_type(format)),
+            ),
+            args=[
+                ast.Call(func=ast.Name("UUID"), args=[ast.Constant(uuid)], keywords=[]),
+            ],
+            keywords=kwargs,
+        )
+        assign = ast.Assign(
+            targets=[ast.Name(const_name)], value=expression, lineno=0, col_offset=0
+        )
+        module.body.append(assign)
+
+    write_file(path, module)
+    print(f"\x1b[1A\x1b[2K✅ Generated {path}")
+
+    return uuid_to_const
+
+
+def generate_services(
+    services: list[dict[str, Any]], characteristics: dict[str, str]
+) -> None:
+
+    path = PROJECT_ROOT / "hap" / "accessories" / "services.py"
+    print(f"🔄 Generating {path} ...")
+
+    imports: set[str] = set()
+    assignments: list[ast.AST] = []
+
+    for service in services:
+
+        uuid = service["UUID"]
+        name = service["Name"]
+        const_name = to_const_name(name)
+        required_characteristics = [
+            characteristics[char_uuid]
+            for char_uuid in service["RequiredCharacteristics"]
+        ]
+        optional_characteristics = [
+            characteristics[char_uuid]
+            for char_uuid in service["OptionalCharacteristics"]
+        ]
+
+        imports |= set(required_characteristics)
+        imports |= set(optional_characteristics)
+
+        expression = ast.Call(
+            func=ast.Name("ServiceType"),
+            args=[
+                ast.Call(func=ast.Name("UUID"), args=[ast.Constant(uuid)], keywords=[]),
+            ],
+            keywords=[
+                ast.keyword(arg="name", value=ast.Constant(name)),
+                ast.keyword(
+                    arg="required_characteristics",
+                    value=ast.Tuple(
+                        elts=[
+                            ast.Name(char_uuid)
+                            for char_uuid in required_characteristics
+                        ]
+                    ),
+                ),
+                ast.keyword(
+                    arg="optional_characteristics",
+                    value=ast.Tuple(
+                        elts=[
+                            ast.Name(char_uuid)
+                            for char_uuid in optional_characteristics
+                        ]
+                    ),
+                ),
+            ],
+        )
+        assign = ast.Assign(
+            targets=[ast.Name(const_name)], value=expression, lineno=0, col_offset=0
+        )
+
+        assignments.append(assign)
+
+    module = ast.Module(
+        body=[
+            ast.ImportFrom(module="uuid", names=[ast.alias(name="UUID")], level=0),
+            ast.ImportFrom(
+                module="base", names=[ast.alias(name="ServiceType")], level=1
+            ),
+            ast.ImportFrom(
+                module="characteristics",
+                names=[ast.alias(char) for char in imports],
+                level=1,
+            ),
+            *assignments,
+        ],
+        type_ignores=[],
+    )
+
+    write_file(path, module)
+
+    print(f"\x1b[1A\x1b[2K✅ Generated {path}")
+
+
+class InitFileTransformer(ast.NodeTransformer):
+    def __init__(self, services: list[str], characteristics: list[str]) -> None:
+        self.all: list[str] = services + characteristics
+
+        self.services_import = ast.ImportFrom(
+            module="services",
+            level=1,
+            names=[ast.alias(name=service) for service in services],
+        )
+        self.characteristics_import = ast.ImportFrom(
+            module="characteristics",
+            level=1,
+            names=[ast.alias(name=char) for char in characteristics],
+        )
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.ImportFrom:
+        if node.module == "services":
+            return self.services_import
+
+        if node.module == "characteristics":
+            return self.characteristics_import
+
+        self.all.extend(alias.name for alias in node.names)
+        return node
+
+    def visit_Assign(self, node: ast.Assign) -> ast.Assign:
+        match node:
+            case ast.Assign(targets=[ast.Name("__all__")]):
+                return ast.Assign(
+                    targets=node.targets,
+                    value=ast.List(
+                        elts=[ast.Constant(name) for name in self.all], ctx=ast.Load()
+                    ),
+                    lineno=node.lineno,
+                    col_offset=node.col_offset,
+                )
+            case _:
+                return node
+
+
+def update_init_file(metadata: dict[str, Any]) -> None:
+
+    path = PROJECT_ROOT / "hap" / "accessories" / "__init__.py"
+
+    print(f"🔄 Updating {path} ...")
+
+    with open(path, "r") as f:
+        module = ast.parse(f.read(), filename=str(path))
+
+    services = [to_const_name(service["Name"]) for service in metadata["Services"]]
+    characteristics = [
+        to_const_name(char["Name"]) for char in metadata["Characteristics"]
+    ]
+
+    new_module = InitFileTransformer(services, characteristics).visit(module)
+
+    write_file(path, new_module)
+
+    print(f"\x1b[1A\x1b[2K✅ Updated {path}")
+
+
+def main() -> None:
+
+    parser = argparse.ArgumentParser(
+        description="Generate characteristics and services from Apple's offical definitions"
+    )
+    parser.add_argument(
+        "simulator_app_path", help="Path to the Homekit Accessory Simulator app"
+    )
+
+    args = parser.parse_args()
+    metadata_path = (
+        pathlib.Path(args.simulator_app_path)
+        / "Contents/Frameworks/HAPAccessoryKit.framework/Resources/default.metadata.plist"
+    )
+
+    if not metadata_path.exists():
+        sys.exit("No metadata file found in the given simulator path")
+
+    with open(metadata_path, "rb") as f:
+        metadata = plistlib.load(f)
+
+    characteristics = generate_characteristics(metadata["Characteristics"])
+    generate_services(metadata["Services"], characteristics=characteristics)
+    update_init_file(metadata)
+
+
+if __name__ == "__main__":
+    main()
