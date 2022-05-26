@@ -7,10 +7,13 @@ runs:
       shell: bash
       run: pip install poetry==${{ env.POETRY_VERSION }}
     - name: Set up Python ${{ env.PYTHON_VERSION }}
+      id: setup-python
       uses: actions/setup-python@v3
       with:
         python-version: ${{ env.PYTHON_VERSION }}
         cache: 'poetry'
     - name: Install dependencies
       shell: bash
-      run: poetry install --remove-untracked
+      run: |
+        poetry env use '${{ steps.cp310.outputs.python-path }}'
+        poetry install --remove-untracked
