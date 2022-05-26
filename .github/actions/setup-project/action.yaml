@@ -5,7 +5,7 @@ runs:
   steps:
     - name: Install poetry
       shell: bash
-      run: pipx install poetry==${{ env.POETRY_VERSION }}
+      run: pip install poetry==${{ env.POETRY_VERSION }}
     - name: Set up Python ${{ env.PYTHON_VERSION }}
       uses: actions/setup-python@v3
       with:
@@ -13,6 +13,4 @@ runs:
         cache: 'poetry'
     - name: Install dependencies
       shell: bash
-      run: |
-        poetry env use "${{ env.PYTHON_VERSION }}"
-        poetry install --remove-untracked
+      run: poetry install --remove-untracked
