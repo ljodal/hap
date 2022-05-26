@@ -5,7 +5,7 @@ runs:
   steps:
     - name: Install poetry
       shell: bash
-      run: pip install poetry==${{ env.POETRY_VERSION }}
+      run: pipx install poetry==${{ env.POETRY_VERSION }}
     - name: Set up Python ${{ env.PYTHON_VERSION }}
       id: setup-python
       uses: actions/setup-python@v3
