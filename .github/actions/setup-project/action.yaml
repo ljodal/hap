@@ -13,4 +13,6 @@ runs:
         cache: 'poetry'
     - name: Install dependencies
       shell: bash
-      run: poetry install --remove-untracked
+      run: |
+        poetry env use "${{ env.PYTHON_VERSION }}"
+        poetry install --remove-untracked
