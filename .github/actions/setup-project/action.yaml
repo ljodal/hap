@@ -15,5 +15,5 @@ runs:
     - name: Install dependencies
       shell: bash
       run: |
-        poetry env use '${{ steps.cp310.outputs.python-path }}'
+        python -m venv .venv
         poetry install --remove-untracked
