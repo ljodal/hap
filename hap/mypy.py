@@ -44,7 +44,7 @@ def define_tlv_class(ctx: DynamicClassDefContext, *, generic_type: str) -> None:
     class_def.fullname = ctx.api.qualified_name(ctx.name)
 
     info = TypeInfo(SymbolTable(), class_def, ctx.api.cur_mod_id)
-    info.mro = [info, tlv_info, ctx.api.named_type("builtins.object")]  # type: ignore
+    info.mro = [info, tlv_info, ctx.api.named_type("builtins.object").type]  # type: ignore
     info.bases = [tlv_base]
 
     class_def.info = info
