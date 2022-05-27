@@ -1,5 +1,5 @@
-from .request import Request
-from .response import BadRequest, JSONResponse, Response
+from ..request import Request
+from ..response import BadRequest, JSONResponse, Response
 
 
 async def index(_: Request) -> JSONResponse:

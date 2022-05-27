@@ -1,5 +1,7 @@
 from typing import Awaitable, Callable, Iterable, Literal, TypedDict
 
+from ..crypto.srp import SRP
+
 
 class ASGIVersions(TypedDict):
     spec_version: str
@@ -44,8 +46,18 @@ class HTTPDisconnectEvent(TypedDict):
     type: Literal["http.disconnect"]
 
 
+# Custom extension for the HAP encryption
+
+
+class HAPSRPEvent(TypedDict):
+    type: Literal["hap.srp"]
+    srp: SRP
+
+
 ASGIReceiveEvent = HTTPRequestEvent | HTTPDisconnectEvent
-ASGISendEvent = HTTPResponseStartEvent | HTTPResponseBodyEvent | HTTPDisconnectEvent
+ASGISendEvent = (
+    HTTPResponseStartEvent | HTTPResponseBodyEvent | HTTPDisconnectEvent | HAPSRPEvent
+)
 
 Scope = HTTPScope
 ASGIReceiveCallable = Callable[[], Awaitable[ASGIReceiveEvent]]

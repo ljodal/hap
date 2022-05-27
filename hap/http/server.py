@@ -1,6 +1,6 @@
 import asyncio
 
-from .api import index
+from .api.accessories import index
 from .app import App
 from .protocol import HTTPProtocol
 

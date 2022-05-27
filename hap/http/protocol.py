@@ -3,6 +3,7 @@ from urllib.parse import unquote
 
 import h11
 
+from ..crypto.srp import SRP
 from .asgi import (
     ASGIApplication,
     ASGIReceiveEvent,
@@ -20,6 +21,7 @@ class HTTPProtocol(asyncio.Protocol):
         self.app = asgi_app
         self.to_app: asyncio.Queue[ASGIReceiveEvent] | None = None
         self.app_task: asyncio.Task[None] | None = None
+        self.srp: SRP | None = None
 
     # Protocol interface
 
@@ -94,7 +96,7 @@ class HTTPProtocol(asyncio.Protocol):
             client=None,
             server=None,
             extensions={
-                "hap": {"is_secure": False},
+                "hap": {"is_secure": False, "srp": self.srp},
             },
         )
         self.app_task = asyncio.ensure_future(
@@ -121,8 +123,9 @@ class HTTPProtocol(asyncio.Protocol):
         elif event["type"] == "http.response.body":
             self.transport.write(self.connection.send(h11.Data(event["body"])))
             if not event["more_body"]:
-                print("No more body, closing connection")
-                self.transport.write_eof()
-                self.transport.close()
+                print("No more body, resetting connection")
+                self.connection.start_next_cycle()
+        elif event["type"] == "hap.srp":
+            self.srp = event["srp"]
         else:
             raise ValueError(f"Unsupported ASGI event: {event['type']}")

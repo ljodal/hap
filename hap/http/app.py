@@ -4,7 +4,6 @@ from the home controller.
 """
 
 from typing import Awaitable, Callable
-from urllib.parse import parse_qs
 
 from .asgi import ASGIReceiveEvent, ASGISendEvent, HTTPScope
 from .request import Request
@@ -12,7 +11,7 @@ from .response import Response
 
 Handler = Callable[[Request], Awaitable[Response] | Response]
 
-RESPONSE_404 = Response(status=404, body=b"")
+RESPONSE_404 = Response(status=404, body=b"", content_type=b"text/plain")
 
 
 class App:
@@ -26,8 +25,6 @@ class App:
         send: Callable[[ASGISendEvent], Awaitable[None]],
     ) -> None:
 
-        query = parse_qs(scope["query_string"].decode(), keep_blank_values=True)
-
         # Consume the entire body of the request
         body = bytearray()
         while True:
@@ -37,9 +34,7 @@ class App:
                 if not event["more_body"]:
                     break
 
-        request = Request(
-            method=scope["method"], path=scope["path"], query=query, body=body.decode()
-        )
+        request = Request(scope=scope, body=body)
 
         print(f"Received request: {request}")
 
