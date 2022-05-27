@@ -22,6 +22,7 @@ adjustments imposed by Apple.
 Adapted from aiohomekit's implementation.
 """
 import hashlib
+import hmac
 import math
 import os
 
@@ -169,16 +170,12 @@ class Client(SRP):
         hash_instance.update(K)
         return hash_instance.digest()
 
-    def verify_servers_proof(self, M: int | bytes) -> bool:
-        if isinstance(M, bytes):
-            tmp = int.from_bytes(M, "big")
-        else:
-            tmp = M
+    def verify_servers_proof(self, M: bytes) -> bool:
         hash_instance = self.h()
         hash_instance.update(self.A)
         hash_instance.update(self.get_proof())
         hash_instance.update(self.get_session_key())
-        return tmp == int.from_bytes(hash_instance.digest(), "big")
+        return hmac.compare_digest(M, hash_instance.digest())
 
 
 class Server(SRP):
@@ -240,7 +237,7 @@ class Server(SRP):
         hash_instance.update(self.A)
         hash_instance.update(self.B)
         hash_instance.update(K)
-        return m == hash_instance.digest()
+        return hmac.compare_digest(m, hash_instance.digest())
 
     def get_proof(self, m: bytes) -> bytes:
         if self.A is None:
