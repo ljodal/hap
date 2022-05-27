@@ -4,15 +4,15 @@ import pytest
 
 from hap import tlv
 
-CASES = [
+CASES = (
     (
         "010568656c6c6f",
-        [(tlv.IDENTIFIER, b"hello")],
+        [tlv.Identifier("hello")],
     ),
     (
         # First item       Sep      Second item
         "010568656c6c6f" + "ff00" + "010568656c6c6f",
-        [(tlv.IDENTIFIER, b"hello"), (tlv.IDENTIFIER, b"hello")],
+        [tlv.Identifier("hello"), tlv.Identifier("hello")],
     ),
     (
         "06010309ff61616161616161616161616161616161616161616161616161616161"
@@ -26,16 +26,18 @@ CASES = [
         "616161616161616161616161616161616161616161616161616161616161616161"
         "61616161616161616161010568656c6c6f",
         [
-            (tlv.STATE, b"\x03"),
-            (tlv.CERTIFICATE, b"a" * 300),
-            (tlv.IDENTIFIER, b"hello"),
+            tlv.State(3),
+            tlv.Certificate(b"a" * 300),
+            tlv.Identifier("hello"),
         ],
     ),
-]
+)
+
+CASE_IDS = ("single value", "values with separator", "split value")
 
 
-@pytest.mark.parametrize("data,expected", CASES)
-def test_tlv_decode(data: str, expected: list[tuple[tlv.TLVType, Any]]) -> None:
+@pytest.mark.parametrize("data,expected", CASES, ids=CASE_IDS)
+def test_tlv_decode(data: str, expected: list[tlv.TLV[Any]]) -> None:
     decoded = tlv.decode(bytes.fromhex(data))
     assert decoded == expected
 
@@ -43,19 +45,16 @@ def test_tlv_decode(data: str, expected: list[tuple[tlv.TLVType, Any]]) -> None:
 @pytest.mark.parametrize(
     "expected,data",
     CASES
-    + [
+    + (
         (
             # First item       Sep      Second item
             "010568656c6c6f" + "ff00" + "010568656c6c6f",
-            [
-                (tlv.IDENTIFIER, b"hello"),
-                (tlv.SEPARATOR, b""),
-                (tlv.IDENTIFIER, b"hello"),
-            ],
+            [tlv.Identifier("hello"), tlv.Separator(), tlv.Identifier("hello")],
         ),
-    ],
+    ),
+    ids=CASE_IDS + ("values with explicit separator",),
 )
-def test_tlv_encode(data: list[tuple[tlv.TLVType, Any]], expected: str) -> None:
+def test_tlv_encode(data: list[tlv.TLV[Any]], expected: str) -> None:
     decoded = tlv.encode(data).hex()
     assert decoded == expected
 
@@ -63,5 +62,9 @@ def test_tlv_encode(data: list[tuple[tlv.TLVType, Any]], expected: str) -> None:
 @pytest.mark.parametrize("tlv_type", list(tlv.TLVType))
 def test_convenience_alias(tlv_type: tlv.TLVType) -> None:
     name = tlv_type.name
-    assert hasattr(tlv, name), f"TLVType.{name} is missing tlv.{name} convenience alias"
-    assert getattr(tlv, name) is tlv_type, f"tlv.{name} != TLVType.{name}"
+    cls_name = name.replace("_", " ").title().replace(" ", "")
+    assert hasattr(tlv, cls_name), f"TLVType.{name} is missing tlv.{cls_name} class"
+    cls = getattr(tlv, cls_name)
+    assert issubclass(cls, tlv.TLV)
+    assert hasattr(cls, "tlv_type")
+    assert cls.tlv_type is tlv_type, f"tlv.{cls_name}.tlv_type != TLVType.{name}"

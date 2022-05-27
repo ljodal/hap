@@ -4,15 +4,15 @@ from functools import cached_property
 from typing import Any
 from urllib.parse import parse_qs
 
-from hap.http.asgi import HTTPScope
-
 from .. import tlv
+from ..crypto import srp
+from .asgi import HTTPScope
 
 
 @dataclass
 class Request:
-    body: bytes
     scope: HTTPScope
+    body: bytes
 
     @property
     def method(self) -> str:
@@ -21,6 +21,15 @@ class Request:
     @property
     def path(self) -> str:
         return self.scope["path"]
+
+    @property
+    def srp_session(self) -> srp.Server | None:
+        # Extract the SRP session from the scope
+        match self.scope["extensions"]:
+            case {"hap": {"srp": srp.Server() as srp_session}}:
+                return srp_session
+
+        return None
 
     @cached_property
     def query(self) -> dict[str, list[str]]:
@@ -33,7 +42,7 @@ class Request:
             None,
         )
 
-    def tlv(self) -> list[tuple[tlv.TLVType, bytes]]:
+    def tlv(self) -> list[tlv.TLV[Any]]:
         if self.content_type != b"application/pairing+tlv8":
             raise ValueError("Request does not contain TLV data")
 

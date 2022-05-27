@@ -1,38 +1,28 @@
 import enum
-from typing import cast
+from typing import Any
 
 from ... import tlv
-from ...crypto.srp import Server as SRPServer
+from ...crypto import srp
 from ..request import Request
 from ..response import BadRequest, PairingResponse, Response, UnprocessableEntity
 
 
-class Method(bytes, enum.Enum):
-    PAIR_SETUP = b"\x00"
-    PAIR_SETUP_WITH_AUTH = b"\x01"
-    PAIR_VERIFY = b"\x02"
-    ADD_PAIRING = b"\x03"
-    REMOVE_PAIRING = b"\x04"
-    LIST_PAIRINGS = b"\x05"
+class Method(enum.IntEnum):
+    PAIR_SETUP = 0
+    PAIR_SETUP_WITH_AUTH = 1
+    PAIR_VERIFY = 2
+    ADD_PAIRING = 3
+    REMOVE_PAIRING = 4
+    LIST_PAIRINGS = 5
 
 
-class State(bytes, enum.Enum):
-    M1 = b"\x01"
-    M2 = b"\x02"
-    M3 = b"\x03"
-    M4 = b"\x04"
-    M5 = b"\x05"
-    M6 = b"\x06"
-
-
-class Error(bytes, enum.Enum):
-    UNKNOWN = b"\x01"
-    AUTHENTICATION = b"\x02"
-    BACKOFF = b"\x03"
-    MAX_PEERS = b"\x04"
-    MAX_TRIES = b"\x05"
-    UNAVAILABLE = b"\x06"
-    BUSY = b"\x07"
+UNKNOWN = 1
+AUTHENTICATION = 2
+BACKOFF = 3
+MAX_PEERS = 4
+MAX_TRIES = 5
+UNAVAILABLE = 6
+BUSY = 7
 
 
 # Pairing
@@ -40,9 +30,7 @@ class Error(bytes, enum.Enum):
 SETUP_CODE = "843-15-743"
 
 
-def _paring_setup_m1(
-    request: Request, *values: tuple[tlv.TLVType, bytes]
-) -> PairingResponse:
+def _paring_setup_m1(request: Request, *values: tlv.TLV[Any]) -> PairingResponse:
     """
     First pairing stage.
     """
@@ -54,87 +42,58 @@ def _paring_setup_m1(
     #     return PairingResponse(tlv.STATE(State.M2), tlv.ERROR(Error.BUSY))
 
     match values:
-        case [
-            (tlv.METHOD, Method.PAIR_SETUP_WITH_AUTH),
-        ]:
+        case [tlv.Method(Method.PAIR_SETUP_WITH_AUTH)]:
             pass
-        case [
-            (tlv.METHOD, Method.PAIR_SETUP),
-            (tlv.FLAGS, _),
-        ]:
+        case [tlv.Method(Method.PAIR_SETUP), tlv.Flags(_)]:
             # TODO: Might have to support this
-            return PairingResponse(tlv.STATE(State.M2), tlv.ERROR(Error.AUTHENTICATION))
+            return PairingResponse(tlv.State(2), tlv.Error(AUTHENTICATION))
         case _:
-            return PairingResponse(tlv.STATE(State.M2), tlv.ERROR(Error.UNKNOWN))
+            return PairingResponse(tlv.State(2), tlv.Error(UNKNOWN))
 
-    srp = SRPServer(username="Pair-Setup", password=SETUP_CODE)
+    srp_session = srp.Server(username="Pair-Setup", password=SETUP_CODE)
 
     return PairingResponse(
-        tlv.STATE(State.M2),
-        tlv.PUBLIC_KEY(srp.public_key),
-        tlv.SALT(srp.salt),
+        tlv.State(2),
+        tlv.PublicKey(srp_session.public_key),
+        tlv.Salt(srp_session.salt),
         # TODO: Flags
     )
 
 
-def _paring_setup_m3(
-    request: Request, *values: tuple[tlv.TLVType, bytes]
-) -> PairingResponse:
+def _paring_setup_m3(request: Request, *values: tlv.TLV[Any]) -> PairingResponse:
     """
     Second pairing stage.
     """
 
-    # Extract the SRP session from the scope
-    match request.scope["extensions"]:
-        case {"hap": {"srp": srp}}:
-            srp = cast(SRPServer, srp)
-        case _:
-            return PairingResponse((tlv.STATE, State.M4), (tlv.ERROR, Error.UNKNOWN))
+    if (srp_session := request.srp_session) is None:
+        return PairingResponse(tlv.State(4), tlv.Error(UNKNOWN))
 
     match values:
-        case [
-            (tlv.PUBLIC_KEY, public_key),
-            (tlv.PROOF, client_proof),
-        ]:
-            srp.set_client_public_key(public_key)
+        case [tlv.PublicKey(public_key), tlv.Proof(client_proof)]:
+            srp_session.set_client_public_key(public_key)
 
-            if not srp.verify_clients_proof(client_proof):
-                return PairingResponse(
-                    tlv.STATE(State.M4), tlv.ERROR(Error.AUTHENTICATION)
-                )
+            if not srp_session.verify_clients_proof(client_proof):
+                return PairingResponse(tlv.State(4), tlv.Error(AUTHENTICATION))
 
-            # TODO: Needs to set session_key on transport and upgrade to encrypted session
-            our_proof = srp.get_proof(client_proof)
-            return PairingResponse(tlv.STATE(State.M4), tlv.PROOF(our_proof))
+            our_proof = srp_session.get_proof(client_proof)
+            return PairingResponse(tlv.State(4), tlv.Proof(our_proof))
         case _:
-            return PairingResponse(
-                (tlv.STATE, State.M4),
-                (tlv.ERROR, Error.UNKNOWN),
-            )
+            return PairingResponse(tlv.State(4), tlv.Error(UNKNOWN))
 
 
-def _paring_setup_m5(
-    request: Request, *values: tuple[tlv.TLVType, bytes]
-) -> PairingResponse:
+def _paring_setup_m5(request: Request, *values: tlv.TLV[Any]) -> PairingResponse:
     """
     Third pairing stage.
     """
 
-    # Extract the SRP session from the scope
-    match request.scope["extensions"]:
-        case {"hap": {"srp": srp}}:
-            srp = cast(SRPServer, srp)
-        case _:
-            return PairingResponse((tlv.STATE, State.M4), (tlv.ERROR, Error.UNKNOWN))
+    # if (srp_session := request.srp_session) is None:
+    #     return PairingResponse((tlv.STATE, State.M4), (tlv.ERROR, Error.UNKNOWN))
 
     match values:
-        case [(tlv.ENCRYPTED_DATA, _)]:
+        case [tlv.EncryptedData(_)]:
             raise NotImplementedError
         case _:
-            return PairingResponse(
-                (tlv.STATE, State.M6),
-                (tlv.ERROR, Error.UNKNOWN),
-            )
+            return PairingResponse(tlv.State(6), tlv.Error(UNKNOWN))
 
 
 async def pairing_setup(request: Request) -> Response:
@@ -144,11 +103,11 @@ async def pairing_setup(request: Request) -> Response:
         return BadRequest(b"Expected a TLV encoded request")
 
     match values:
-        case [(tlv.STATE, State.M1), *rest]:
+        case [tlv.State(1), *rest]:
             return _paring_setup_m1(request, *rest)
-        case [(tlv.STATE, State.M3), *rest]:
+        case [tlv.State(3), *rest]:
             return _paring_setup_m3(request, *rest)
-        case [(tlv.STATE, State.M5), *rest]:
+        case [tlv.State(5), *rest]:
             return _paring_setup_m5(request, *rest)
         case _:
             return UnprocessableEntity(b"")
