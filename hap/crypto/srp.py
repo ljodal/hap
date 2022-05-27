@@ -30,6 +30,19 @@ def to_bytes(num: int) -> bytes:
     return num.to_bytes(int(math.ceil(num.bit_length() / 8)), "big")
 
 
+def generate_private_key() -> int:
+    """
+    Static function to generate a 16 byte random key.
+
+    :return: the key as an integer
+    """
+    return int.from_bytes(os.urandom(16), byteorder="big")
+
+
+def generate_salt() -> bytes:
+    return os.urandom(16)
+
+
 class SRP:
     def __init__(self, username: str, password: str, salt: bytes) -> None:
         # generator as defined by 3072bit group of RFC 5054
@@ -54,21 +67,13 @@ class SRP:
         )
         # HomeKit requires SHA-512 (See page 36)
         self.h = hashlib.sha512
-        self.A: int | None = None
-        self.B: int | None = None
+
+        self.A: bytes | None = None
+        self.B: bytes | None = None
 
         self.username = username
         self.password = password
         self.salt = salt
-
-    @staticmethod
-    def generate_private_key() -> int:
-        """
-        Static function to generate a 16 byte random key.
-
-        :return: the key as an integer
-        """
-        return int.from_bytes(os.urandom(16), byteorder="big")
 
     @property
     def k(self) -> int:
@@ -88,16 +93,14 @@ class SRP:
         if self.B is None:
             raise RuntimeError("Server's public key is missing")
         hash_instance = self.h()
-        A_b = to_bytes(self.A)
-        B_b = to_bytes(self.B)
-        hash_instance.update(A_b)
-        hash_instance.update(B_b)
+        hash_instance.update(self.A)
+        hash_instance.update(self.B)
         u = int.from_bytes(hash_instance.digest(), "big")
         return u
 
     def get_session_key(self) -> bytes:
         hash_instance = self.h()
-        hash_instance.update(to_bytes(self.get_shared_secret()))
+        hash_instance.update(self.get_shared_secret())
         return hash_instance.digest()
 
     @property
@@ -113,44 +116,33 @@ class SRP:
 
         return int.from_bytes(hash_instance.digest(), "big")
 
-    def get_shared_secret(self) -> int:
+    def get_shared_secret(self) -> bytes:
         raise NotImplementedError()
 
 
-class SRPClient(SRP):
+class Client(SRP):
     """
     Implements all functions that are required to simulate an iOS HomeKit controller
     """
 
-    def __init__(self, username: str, password: str, salt: bytes) -> None:
+    def __init__(self, username: str, password: str, salt: bytes, B: bytes) -> None:
         super().__init__(username, password, salt)
-        self.a = self.generate_private_key()
-        self.A: int = pow(self.g, self.a, self.n)
+        self.a = generate_private_key()
+        self.A: bytes = to_bytes(pow(self.g, self.a, self.n))
+        self.B: bytes = B
 
     @property
     def public_key(self) -> bytes:
         return to_bytes(pow(self.g, self.a, self.n))
 
-    def set_server_public_key(self, B: int | bytes) -> None:
-        if isinstance(B, bytes):
-            self.B = int.from_bytes(B, "big")
-        else:
-            self.B = B
-
-    def get_shared_secret(self) -> int:
-        if self.B is None:
-            raise TypeError("Server's public key is missing")
+    def get_shared_secret(self) -> bytes:
         u = self.u
         x = self.x
-        tmp1 = self.B - (self.k * pow(self.g, x, self.n))
+        tmp1 = int.from_bytes(self.B, "big") - (self.k * pow(self.g, x, self.n))
         tmp2 = self.a + (u * x)  # % self.n
-        S = pow(tmp1, tmp2, self.n)
-        return S
+        return to_bytes(pow(tmp1, tmp2, self.n))
 
     def get_proof(self) -> bytes:
-        if self.B is None:
-            raise TypeError("Server's public key is missing")
-
         hash_instance = self.h()
         hash_instance.update(to_bytes(self.n))
         hN = bytearray(hash_instance.digest())
@@ -172,8 +164,8 @@ class SRPClient(SRP):
         hash_instance.update(hN)
         hash_instance.update(hu)
         hash_instance.update(self.salt)
-        hash_instance.update(to_bytes(self.A))
-        hash_instance.update(to_bytes(self.B))
+        hash_instance.update(self.A)
+        hash_instance.update(self.B)
         hash_instance.update(K)
         return hash_instance.digest()
 
@@ -183,22 +175,22 @@ class SRPClient(SRP):
         else:
             tmp = M
         hash_instance = self.h()
-        hash_instance.update(to_bytes(self.A))
+        hash_instance.update(self.A)
         hash_instance.update(self.get_proof())
         hash_instance.update(self.get_session_key())
         return tmp == int.from_bytes(hash_instance.digest(), "big")
 
 
-class SRPServer(SRP):
+class Server(SRP):
     """
     Implements all functions that are required to simulate an iOS HomeKit accessory
     """
 
     def __init__(self, username: str, password: str) -> None:
-        super().__init__(username, password, salt=os.urandom(16))
-        self.b = self.generate_private_key()
+        super().__init__(username, password, salt=generate_salt())
+        self.b = generate_private_key()
         g_b = pow(self.g, self.b, self.n)
-        self.B: int = (self.k * self.verifier + g_b) % self.n
+        self.B: bytes = to_bytes((self.k * self.verifier + g_b) % self.n)
 
     @property
     def verifier(self) -> int:
@@ -206,22 +198,19 @@ class SRPServer(SRP):
         v = pow(self.g, hash_value, self.n)
         return v
 
-    def set_client_public_key(self, A: int | bytes) -> None:
-        if isinstance(A, bytes):
-            self.A = int.from_bytes(A, "big")
-        else:
-            self.A = A
+    def set_client_public_key(self, A: bytes) -> None:
+        self.A = A
 
     @property
     def public_key(self) -> bytes:
-        return to_bytes((self.k * self.verifier + pow(self.g, self.b, self.n)) % self.n)
+        return self.B
 
-    def get_shared_secret(self) -> int:
+    def get_shared_secret(self) -> bytes:
         if self.A is None:
             raise TypeError("Client's public key is missing")
 
-        tmp1 = self.A * pow(self.verifier, self.u, self.n)
-        return pow(tmp1, self.b, self.n)
+        tmp1 = int.from_bytes(self.A, "big") * pow(self.verifier, self.u, self.n)
+        return to_bytes(pow(tmp1, self.b, self.n))
 
     def verify_clients_proof(self, m: bytes) -> bool:
         if self.A is None:
@@ -248,8 +237,8 @@ class SRPServer(SRP):
         hash_instance.update(hN)
         hash_instance.update(hu)
         hash_instance.update(self.salt)
-        hash_instance.update(to_bytes(self.A))
-        hash_instance.update(to_bytes(self.B))
+        hash_instance.update(self.A)
+        hash_instance.update(self.B)
         hash_instance.update(K)
         return m == hash_instance.digest()
 
@@ -258,7 +247,7 @@ class SRPServer(SRP):
             raise TypeError("Client's public key is missing")
 
         hash_instance = self.h()
-        hash_instance.update(to_bytes(self.A))
+        hash_instance.update(self.A)
         hash_instance.update(m)
         hash_instance.update(self.get_session_key())
         return hash_instance.digest()

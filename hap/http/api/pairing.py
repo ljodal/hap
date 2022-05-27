@@ -1,9 +1,8 @@
 import enum
 from typing import cast
 
-from hap.crypto.srp import SRPServer
-
 from ... import tlv
+from ...crypto.srp import Server as SRPServer
 from ..request import Request
 from ..response import BadRequest, PairingResponse, Response, UnprocessableEntity
 
