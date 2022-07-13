@@ -1,6 +1,6 @@
 from typing import Awaitable, Callable, Iterable, Literal, TypedDict
 
-from ..crypto.srp import SRP
+from ..crypto import srp
 
 
 class ASGIVersions(TypedDict):
@@ -51,7 +51,7 @@ class HTTPDisconnectEvent(TypedDict):
 
 class HAPSRPEvent(TypedDict):
     type: Literal["hap.srp"]
-    srp: SRP
+    srp: srp.Server
 
 
 ASGIReceiveEvent = HTTPRequestEvent | HTTPDisconnectEvent

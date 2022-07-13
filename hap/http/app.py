@@ -5,6 +5,7 @@ from the home controller.
 
 from typing import Awaitable, Callable
 
+from .api import HANDLERS
 from .asgi import ASGIReceiveEvent, ASGISendEvent, HTTPScope
 from .request import Request
 from .response import Response
@@ -15,9 +16,6 @@ RESPONSE_404 = Response(status=404, body=b"", content_type=b"text/plain")
 
 
 class App:
-    def __init__(self, handlers: dict[tuple[str, str], Handler]) -> None:
-        self.handlers = handlers
-
     async def __call__(
         self,
         scope: HTTPScope,
@@ -34,7 +32,7 @@ class App:
                 if not event["more_body"]:
                     break
 
-        request = Request(scope=scope, body=body)
+        request = Request(scope=scope, body=bytes(body))
 
         print(f"Received request: {request}")
 
@@ -52,6 +50,10 @@ class App:
                 ],
             }
         )
+
+        if srp := getattr(response, "srp", None):
+            await send({"type": "hap.srp", "srp": srp})
+
         await send(
             {
                 "type": "http.response.body",
@@ -65,8 +67,7 @@ class App:
         method = "GET" if request.method == "HEAD" else request.method
 
         # Find the handler for this request and call it
-        handler = self.handlers.get((method, request.path), None)
-        if not handler:
-            return RESPONSE_404
+        if handler := HANDLERS.get((method, request.path), None):
+            return handler(request)
 
-        return handler(request)
+        return RESPONSE_404

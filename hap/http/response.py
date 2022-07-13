@@ -2,6 +2,7 @@ import json
 from typing import Any
 
 from .. import tlv
+from ..crypto.srp import SRP
 
 
 class Response:
@@ -34,7 +35,10 @@ class JSONResponse(Response):
 
 
 class PairingResponse(Response):
-    def __init__(self, *values: tlv.TLV[Any], status: int = 200) -> None:
+    def __init__(
+        self, *values: tlv.TLV[Any], status: int = 200, srp: SRP | None = None
+    ) -> None:
         super().__init__(
-            tlv.encode(values), status=status, content_type=b"application/pairing+tlv8"
+            tlv.encode(*values), status=status, content_type=b"application/pairing+tlv8"
         )
+        self.srp = srp

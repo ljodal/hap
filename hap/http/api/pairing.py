@@ -1,10 +1,13 @@
 import enum
+import logging
 from typing import Any
 
 from ... import tlv
-from ...crypto import srp
+from ...crypto import chacha20poly1305, ed22519, hkdf, srp
 from ..request import Request
 from ..response import BadRequest, PairingResponse, Response, UnprocessableEntity
+
+logger = logging.getLogger(__name__)
 
 
 class Method(enum.IntEnum):
@@ -45,9 +48,11 @@ def _paring_setup_m1(request: Request, *values: tlv.TLV[Any]) -> PairingResponse
         case [tlv.Method(Method.PAIR_SETUP_WITH_AUTH)]:
             pass
         case [tlv.Method(Method.PAIR_SETUP), tlv.Flags(_)]:
+            logger.error("Tried to pare without auth, not supported")
             # TODO: Might have to support this
             return PairingResponse(tlv.State(2), tlv.Error(AUTHENTICATION))
-        case _:
+        case tlv_data:
+            logger.error("Unexpected M1 data received: %s", tlv_data)
             return PairingResponse(tlv.State(2), tlv.Error(UNKNOWN))
 
     srp_session = srp.Server(username="Pair-Setup", password=SETUP_CODE)
@@ -57,6 +62,7 @@ def _paring_setup_m1(request: Request, *values: tlv.TLV[Any]) -> PairingResponse
         tlv.PublicKey(srp_session.public_key),
         tlv.Salt(srp_session.salt),
         # TODO: Flags
+        srp=srp_session,
     )
 
 
@@ -66,19 +72,24 @@ def _paring_setup_m3(request: Request, *values: tlv.TLV[Any]) -> PairingResponse
     """
 
     if (srp_session := request.srp_session) is None:
+        logger.error("SRP session is missing")
         return PairingResponse(tlv.State(4), tlv.Error(UNKNOWN))
 
     match values:
         case [tlv.PublicKey(public_key), tlv.Proof(client_proof)]:
-            srp_session.set_client_public_key(public_key)
-
-            if not srp_session.verify_clients_proof(client_proof):
-                return PairingResponse(tlv.State(4), tlv.Error(AUTHENTICATION))
-
-            our_proof = srp_session.get_proof(client_proof)
-            return PairingResponse(tlv.State(4), tlv.Proof(our_proof))
-        case _:
+            pass
+        case tlv_data:
+            logger.error("Unexpected M3 data received: %s", tlv_data)
             return PairingResponse(tlv.State(4), tlv.Error(UNKNOWN))
+
+    srp_session.set_client_public_key(public_key)
+
+    if not srp_session.verify_clients_proof(client_proof):
+        logger.error("Client proof did not match")
+        return PairingResponse(tlv.State(4), tlv.Error(AUTHENTICATION))
+
+    our_proof = srp_session.get_proof(client_proof)
+    return PairingResponse(tlv.State(4), tlv.Proof(our_proof))
 
 
 def _paring_setup_m5(request: Request, *values: tlv.TLV[Any]) -> PairingResponse:
@@ -86,14 +97,70 @@ def _paring_setup_m5(request: Request, *values: tlv.TLV[Any]) -> PairingResponse
     Third pairing stage.
     """
 
-    # if (srp_session := request.srp_session) is None:
-    #     return PairingResponse((tlv.STATE, State.M4), (tlv.ERROR, Error.UNKNOWN))
+    if (srp_session := request.srp_session) is None:
+        logger.error("SRP session is missing")
+        return PairingResponse(tlv.State(6), tlv.Error(UNKNOWN))
+
+    session_key = hkdf(
+        srp_session.get_shared_secret(),
+        b"Pair-Setup-Encrypt-Salt",
+        b"Pair-Setup-Encrypt-Info",
+    )
 
     match values:
-        case [tlv.EncryptedData(_)]:
-            raise NotImplementedError
-        case _:
+        case [tlv.EncryptedData(encrypted_data)]:
+            pass
+        case tlv_data:
+            logger.error("Unexpected M5 data received: %s", tlv_data)
             return PairingResponse(tlv.State(6), tlv.Error(UNKNOWN))
+
+    try:
+        # Decrypt the received data
+        nonce = b"PS-Msg05\x00\x00\x00\x00"
+        decrypted_data = chacha20poly1305.decrypt(session_key, nonce, encrypted_data)
+        # Decode the decrypted data
+        decoded_values = tlv.decode(decrypted_data)
+        # Verify the client's signature
+        _verify_client_signature(srp_session.get_shared_secret(), *decoded_values)
+    except ValueError:
+        logger.exception("Unable to verify client's signature")
+        return PairingResponse(tlv.State(6), tlv.Error(AUTHENTICATION))
+
+    # The client has been verified, so we need to store the pairing id and
+    # public key of the client
+
+    our_signature = _generate_our_signature(session_key)
+    return PairingResponse(tlv.State(6), tlv.EncryptedData(our_signature))
+
+
+def _verify_client_signature(shared_secret: bytes, *values: tlv.TLV[Any]) -> None:
+
+    match values:
+        case [
+            tlv.Identifier(ios_device_pairing_id),
+            tlv.PublicKey(ios_device_public_key),
+            tlv.Signature(ios_device_signature),
+        ]:
+            pass
+        case _:
+            raise ValueError("Invalid encrypted data")
+
+    ios_device_x = hkdf(
+        shared_secret,
+        salt=b"Pair-Setup-Controller-Sign-Salt",
+        info=b"Pair-Setup-Controller-Sign-Info",
+    )
+
+    ios_device_info = (
+        ios_device_x + ios_device_pairing_id.encode() + ios_device_public_key
+    )
+    ed22519.verify(ios_device_public_key, ios_device_signature, ios_device_info)
+
+
+def _generate_our_signature(session_key: bytes) -> bytes:
+
+    data = tlv.encode(tlv.Identifier(...), tlv.PublicKey(...), tlv.Signature(...))
+    return chacha20poly1305.encrypt(session_key, b"PS-Msg06", data)
 
 
 async def pairing_setup(request: Request) -> Response:
