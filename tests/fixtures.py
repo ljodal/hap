@@ -77,7 +77,7 @@ class Client:
         async def send(event: ASGISendEvent) -> None:
             send_events.append(event)
 
-        # Run the app until it exits and assume it'd one all it's work by then
+        # Run the app until it exits and assume it's done all its work by then
         asyncio.run(self.app(scope, receive, send))
 
         # We should have received some send events, and the first one should be

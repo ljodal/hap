@@ -101,10 +101,9 @@ def _paring_setup_m5(request: Request, *values: tlv.TLV[Any]) -> PairingResponse
         logger.error("SRP session is missing")
         return PairingResponse(tlv.State(6), tlv.Error(UNKNOWN))
 
+    shared_secret = srp_session.get_shared_secret()
     session_key = hkdf(
-        srp_session.get_shared_secret(),
-        b"Pair-Setup-Encrypt-Salt",
-        b"Pair-Setup-Encrypt-Info",
+        shared_secret, b"Pair-Setup-Encrypt-Salt", b"Pair-Setup-Encrypt-Info"
     )
 
     match values:
@@ -121,7 +120,7 @@ def _paring_setup_m5(request: Request, *values: tlv.TLV[Any]) -> PairingResponse
         # Decode the decrypted data
         decoded_values = tlv.decode(decrypted_data)
         # Verify the client's signature
-        _verify_client_signature(srp_session.get_shared_secret(), *decoded_values)
+        _verify_client_signature(shared_secret, *decoded_values)
     except ValueError:
         logger.exception("Unable to verify client's signature")
         return PairingResponse(tlv.State(6), tlv.Error(AUTHENTICATION))
@@ -129,7 +128,7 @@ def _paring_setup_m5(request: Request, *values: tlv.TLV[Any]) -> PairingResponse
     # The client has been verified, so we need to store the pairing id and
     # public key of the client
 
-    our_signature = _generate_our_signature(session_key)
+    our_signature = _generate_our_signature(shared_secret, session_key)
     return PairingResponse(tlv.State(6), tlv.EncryptedData(our_signature))
 
 
@@ -154,13 +153,30 @@ def _verify_client_signature(shared_secret: bytes, *values: tlv.TLV[Any]) -> Non
     ios_device_info = (
         ios_device_x + ios_device_pairing_id.encode() + ios_device_public_key
     )
+
     ed22519.verify(ios_device_public_key, ios_device_signature, ios_device_info)
 
 
-def _generate_our_signature(session_key: bytes) -> bytes:
+def _generate_our_signature(shared_secret: bytes, session_key: bytes) -> bytes:
 
-    data = tlv.encode(tlv.Identifier(...), tlv.PublicKey(...), tlv.Signature(...))
-    return chacha20poly1305.encrypt(session_key, b"PS-Msg06", data)
+    # TODO: Store private keys
+    accessory_pairing_id = "bar"
+    accessory_private_key = ed22519.generate_private_key()
+    accessory_public_key = ed22519.get_public_key(accessory_private_key)
+    accessory_x = hkdf(
+        shared_secret,
+        b"Pair-Setup-Accessory-Sign-Salt",
+        b"Pair-Setup-Accessory-Sign-Info",
+    )
+    accessory_info = accessory_x + accessory_pairing_id.encode() + accessory_public_key
+    accessory_signature = accessory_private_key.sign(accessory_info)
+
+    sub_tlv = tlv.encode(
+        tlv.Identifier(accessory_pairing_id),
+        tlv.PublicKey(accessory_public_key),
+        tlv.Signature(accessory_signature),
+    )
+    return chacha20poly1305.encrypt(session_key, b"PS-Msg06\x00\x00\x00\x00", sub_tlv)
 
 
 async def pairing_setup(request: Request) -> Response:

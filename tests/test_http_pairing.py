@@ -19,7 +19,7 @@ def test_pairing_setup(client: Client) -> None:
 
     tlv_data = response.tlv()
     match tlv_data:
-        case tlv.State(2), tlv.PublicKey(public_key), tlv.Salt(salt):
+        case tlv.State(2), tlv.PublicKey(accessory_public_key), tlv.Salt(salt):
             pass
         case _:
             raise AssertionError(f"Unexpected TLV data: {tlv_data}")
@@ -28,7 +28,11 @@ def test_pairing_setup(client: Client) -> None:
     # Second request, send our public key and proof that we know the setup code
     #
 
-    srp_session = srp.Client("Pair-Setup", SETUP_CODE, salt, public_key)
+    srp_session = srp.Client("Pair-Setup", SETUP_CODE, salt, accessory_public_key)
+    shared_secret = srp_session.get_shared_secret()
+    session_key = hkdf(
+        shared_secret, b"Pair-Setup-Encrypt-Salt", b"Pair-Setup-Encrypt-Info"
+    )
 
     response = client.post(
         "/pair-setup",
@@ -54,32 +58,27 @@ def test_pairing_setup(client: Client) -> None:
     #
 
     ios_device_pairing_id = "foo"
-    ios_device_ltsk = ed22519.generate_private_key()
-    ios_device_ltpk = ed22519.get_public_key(ios_device_ltsk)
+    ios_device_private_key = ed22519.generate_private_key()
+    ios_device_public_key = ed22519.get_public_key(ios_device_private_key)
     ios_device_x = hkdf(
-        srp_session.get_session_key(),
+        shared_secret,
         b"Pair-Setup-Controller-Sign-Salt",
         b"Pair-Setup-Controller-Sign-Info",
     )
-    ios_device_info = ios_device_x + ios_device_pairing_id.encode() + ios_device_ltpk
+    ios_device_info = (
+        ios_device_x + ios_device_pairing_id.encode() + ios_device_public_key
+    )
 
-    ios_device_signature = ios_device_ltsk.sign(ios_device_info)
+    ios_device_signature = ios_device_private_key.sign(ios_device_info)
 
     sub_tlv = tlv.encode(
         tlv.Identifier(ios_device_pairing_id),
-        tlv.PublicKey(ios_device_ltpk),
+        tlv.PublicKey(ios_device_public_key),
         tlv.Signature(ios_device_signature),
     )
 
-    session_key = hkdf(
-        srp_session.get_shared_secret(),
-        b"Pair-Setup-Encrypt-Salt",
-        b"Pair-Setup-Encrypt-Info",
-    )
-
-    encrypted_data = chacha20poly1305.encrypt(
-        session_key, b"PS-Msg05\x00\x00\x00\x00", sub_tlv
-    )
+    nonce = b"PS-Msg05\x00\x00\x00\x00"
+    encrypted_data = chacha20poly1305.encrypt(session_key, nonce, sub_tlv)
 
     response = client.post(
         "/pair-setup", tlv=(tlv.State(5), tlv.EncryptedData(encrypted_data))
@@ -93,4 +92,23 @@ def test_pairing_setup(client: Client) -> None:
         case _:
             raise AssertionError(f"Unexpected TLV data: {tlv_data}")
 
-    assert False
+    nonce = b"PS-Msg06\x00\x00\x00\x00"
+    decrypted_data = chacha20poly1305.decrypt(session_key, nonce, encrypted_data)
+    match tlv.decode(decrypted_data):
+        case [
+            tlv.Identifier(accessory_pairing_id),
+            tlv.PublicKey(accessory_public_key),
+            tlv.Signature(accessory_signature),
+        ]:
+            pass
+        case tlv_data:
+            raise AssertionError(f"Unexpected TLV data: {tlv_data}")
+
+    accessory_x = hkdf(
+        shared_secret,
+        b"Pair-Setup-Accessory-Sign-Salt",
+        b"Pair-Setup-Accessory-Sign-Info",
+    )
+    accessory_info = accessory_x + accessory_pairing_id.encode() + accessory_public_key
+
+    ed22519.verify(accessory_public_key, accessory_signature, accessory_info)
