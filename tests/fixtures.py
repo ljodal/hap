@@ -2,9 +2,8 @@ import asyncio
 import json as _json
 from typing import Any, Iterable
 
-from hap.crypto import srp
 from hap.http.app import App
-from hap.http.request import Request
+from hap.http.request import Request, Session
 from hap.http.response import Response
 from hap.tlv import TLV
 from hap.tlv import encode as encode_tlv
@@ -17,7 +16,7 @@ class Client:
 
     def __init__(self) -> None:
         self.app = App()
-        self.srp_session: srp.Server | None = None
+        self.session = Session()
 
     def request(
         self,
@@ -46,14 +45,11 @@ class Client:
                 (key.encode(), value.encode()) for key, value in headers.items()
             ),
             body=body,
-            srp_session=self.srp_session,
+            session=self.session,
         )
 
         # Run the app until it exits and assume it's done all its work by then
-        response = asyncio.run(self.app(request))
-        if srp_session := getattr(response, "srp", None):
-            self.srp_session = srp_session
-        return response
+        return asyncio.run(self.app(request))
 
     def get(self, path: str, *, headers: dict[str, str] | None = None) -> Response:
         return self.request("GET", path, headers=headers)

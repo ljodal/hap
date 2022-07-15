@@ -4,9 +4,8 @@ from urllib.parse import parse_qs, unquote
 
 import h11
 
-from ..crypto import srp
 from .app import App
-from .request import Request
+from .request import Request, Session
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +17,9 @@ class HTTPProtocol(asyncio.Protocol):
     def __init__(self, app: App) -> None:
         self.app = app
         self.app_task: asyncio.Task[None] | None = None
-        self.srp: srp.Server | None = None
         self.request: h11.Request | None = None
         self.data: list[h11.Data] = []
+        self.session = Session()
 
     # Protocol interface
 
@@ -83,8 +82,8 @@ class HTTPProtocol(asyncio.Protocol):
             path=unquote(path.decode()),
             query=parse_qs(query_string.decode(), keep_blank_values=True),
             headers=tuple(self.request.headers),
-            srp_session=self.srp,
             body=b"".join(data.data for data in self.data),
+            session=self.session,
         )
 
         print("Calling app")
@@ -111,9 +110,6 @@ class HTTPProtocol(asyncio.Protocol):
         self.connection.start_next_cycle()
 
         print("Wrote response")
-
-        if srp_session := getattr(response, "srp", None):
-            self.srp_session = srp_session
 
         # Make sure we process any pending events
         asyncio.get_running_loop().call_soon(self.process_events)

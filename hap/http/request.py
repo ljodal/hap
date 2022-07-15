@@ -4,10 +4,15 @@ from functools import cached_property
 from typing import Any
 
 from .. import tlv
-from ..crypto import srp
+from ..crypto.srp import Server as SRPServer
 
 
 @dataclass
+class Session:
+    srp: SRPServer | None = None
+
+
+@dataclass(kw_only=True)
 class Request:
     method: str
     path: str
@@ -15,8 +20,7 @@ class Request:
     query: dict[str, list[str]] = field(default_factory=dict)
     headers: tuple[tuple[bytes, bytes], ...] = ()
 
-    # TODO: Extract to a separate Session class
-    srp_session: srp.Server | None = None
+    session: Session
 
     @cached_property
     def content_type(self) -> bytes | None:

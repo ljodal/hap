@@ -5,7 +5,7 @@ from typing import Any
 from ... import tlv
 from ...crypto import chacha20poly1305, ed22519, hkdf, srp
 from ..request import Request
-from ..response import BadRequest, PairingResponse, Response, UnprocessableEntity
+from ..response import BadRequest, Response, TLVResponse, UnprocessableEntity
 
 logger = logging.getLogger(__name__)
 
@@ -33,16 +33,16 @@ BUSY = 7
 SETUP_CODE = "843-15-743"
 
 
-def _paring_setup_m1(request: Request, *values: tlv.TLV[Any]) -> PairingResponse:
+def _paring_setup_m1(request: Request, *values: tlv.TLV[Any]) -> TLVResponse:
     """
     First pairing stage.
     """
 
     # TODO: Get this from somewhere
     # if is_paired:
-    #     return PairingResponse(tlv.STATE(State.M2), tlv.ERROR(Error.UNAVAILABLE))
+    #     return TLVResponse(tlv.STATE(State.M2), tlv.ERROR(Error.UNAVAILABLE))
     # if is_paring:
-    #     return PairingResponse(tlv.STATE(State.M2), tlv.ERROR(Error.BUSY))
+    #     return TLVResponse(tlv.STATE(State.M2), tlv.ERROR(Error.BUSY))
 
     match values:
         case [tlv.Method(Method.PAIR_SETUP_WITH_AUTH)]:
@@ -50,56 +50,55 @@ def _paring_setup_m1(request: Request, *values: tlv.TLV[Any]) -> PairingResponse
         case [tlv.Method(Method.PAIR_SETUP), tlv.Flags(_)]:
             logger.error("Tried to pare without auth, not supported")
             # TODO: Might have to support this
-            return PairingResponse(tlv.State(2), tlv.Error(AUTHENTICATION))
+            return TLVResponse(tlv.State(2), tlv.Error(AUTHENTICATION))
         case tlv_data:
             logger.error("Unexpected M1 data received: %s", tlv_data)
-            return PairingResponse(tlv.State(2), tlv.Error(UNKNOWN))
+            return TLVResponse(tlv.State(2), tlv.Error(UNKNOWN))
 
-    srp_session = srp.Server(username="Pair-Setup", password=SETUP_CODE)
+    session = request.session
+    session.srp = srp.Server(username="Pair-Setup", password=SETUP_CODE)
 
-    return PairingResponse(
+    return TLVResponse(
         tlv.State(2),
-        tlv.PublicKey(srp_session.public_key),
-        tlv.Salt(srp_session.salt),
-        # TODO: Flags
-        srp=srp_session,
+        tlv.PublicKey(session.srp.public_key),
+        tlv.Salt(session.srp.salt),
     )
 
 
-def _paring_setup_m3(request: Request, *values: tlv.TLV[Any]) -> PairingResponse:
+def _paring_setup_m3(request: Request, *values: tlv.TLV[Any]) -> TLVResponse:
     """
     Second pairing stage.
     """
 
-    if (srp_session := request.srp_session) is None:
+    if (srp_session := request.session.srp) is None:
         logger.error("SRP session is missing")
-        return PairingResponse(tlv.State(4), tlv.Error(UNKNOWN))
+        return TLVResponse(tlv.State(4), tlv.Error(UNKNOWN))
 
     match values:
         case [tlv.PublicKey(public_key), tlv.Proof(client_proof)]:
             pass
         case tlv_data:
             logger.error("Unexpected M3 data received: %s", tlv_data)
-            return PairingResponse(tlv.State(4), tlv.Error(UNKNOWN))
+            return TLVResponse(tlv.State(4), tlv.Error(UNKNOWN))
 
     srp_session.set_client_public_key(public_key)
 
     if not srp_session.verify_clients_proof(client_proof):
         logger.error("Client proof did not match")
-        return PairingResponse(tlv.State(4), tlv.Error(AUTHENTICATION))
+        return TLVResponse(tlv.State(4), tlv.Error(AUTHENTICATION))
 
     our_proof = srp_session.get_proof(client_proof)
-    return PairingResponse(tlv.State(4), tlv.Proof(our_proof))
+    return TLVResponse(tlv.State(4), tlv.Proof(our_proof))
 
 
-def _paring_setup_m5(request: Request, *values: tlv.TLV[Any]) -> PairingResponse:
+def _paring_setup_m5(request: Request, *values: tlv.TLV[Any]) -> TLVResponse:
     """
     Third pairing stage.
     """
 
-    if (srp_session := request.srp_session) is None:
+    if (srp_session := request.session.srp) is None:
         logger.error("SRP session is missing")
-        return PairingResponse(tlv.State(6), tlv.Error(UNKNOWN))
+        return TLVResponse(tlv.State(6), tlv.Error(UNKNOWN))
 
     shared_secret = srp_session.get_shared_secret()
     session_key = hkdf(
@@ -111,7 +110,7 @@ def _paring_setup_m5(request: Request, *values: tlv.TLV[Any]) -> PairingResponse
             pass
         case tlv_data:
             logger.error("Unexpected M5 data received: %s", tlv_data)
-            return PairingResponse(tlv.State(6), tlv.Error(UNKNOWN))
+            return TLVResponse(tlv.State(6), tlv.Error(UNKNOWN))
 
     try:
         # Decrypt the received data
@@ -123,13 +122,13 @@ def _paring_setup_m5(request: Request, *values: tlv.TLV[Any]) -> PairingResponse
         _verify_client_signature(shared_secret, *decoded_values)
     except ValueError:
         logger.exception("Unable to verify client's signature")
-        return PairingResponse(tlv.State(6), tlv.Error(AUTHENTICATION))
+        return TLVResponse(tlv.State(6), tlv.Error(AUTHENTICATION))
 
     # The client has been verified, so we need to store the pairing id and
     # public key of the client
 
     our_signature = _generate_our_signature(shared_secret, session_key)
-    return PairingResponse(tlv.State(6), tlv.EncryptedData(our_signature))
+    return TLVResponse(tlv.State(6), tlv.EncryptedData(our_signature))
 
 
 def _verify_client_signature(shared_secret: bytes, *values: tlv.TLV[Any]) -> None:
