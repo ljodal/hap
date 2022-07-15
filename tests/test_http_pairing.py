@@ -17,11 +17,10 @@ def test_pairing_setup(client: Client) -> None:
     response = client.post("/pair-setup", tlv=(tlv.State(1), tlv.Method(1)))
     assert response.status == 200
 
-    tlv_data = response.tlv()
-    match tlv_data:
+    match tlv.decode(response.body):
         case tlv.State(2), tlv.PublicKey(accessory_public_key), tlv.Salt(salt):
             pass
-        case _:
+        case tlv_data:
             raise AssertionError(f"Unexpected TLV data: {tlv_data}")
 
     #
@@ -44,11 +43,10 @@ def test_pairing_setup(client: Client) -> None:
     )
     assert response.status == 200
 
-    tlv_data = response.tlv()
-    match tlv_data:
+    match tlv.decode(response.body):
         case tlv.State(4), tlv.Proof(proof):
             pass
-        case _:
+        case tlv_data:
             raise AssertionError(f"Unexpected TLV data: {tlv_data}")
 
     assert srp_session.verify_servers_proof(proof)
@@ -85,11 +83,10 @@ def test_pairing_setup(client: Client) -> None:
     )
     assert response.status == 200
 
-    tlv_data = response.tlv()
-    match tlv_data:
+    match tlv.decode(response.body):
         case tlv.State(6), tlv.EncryptedData(encrypted_data):
             pass
-        case _:
+        case tlv_data:
             raise AssertionError(f"Unexpected TLV data: {tlv_data}")
 
     nonce = b"PS-Msg06\x00\x00\x00\x00"
