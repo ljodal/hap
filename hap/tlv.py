@@ -5,7 +5,7 @@ Encoding and decoding of type-length-value (TLV) encoded values.
 import math
 import struct
 from enum import IntEnum
-from typing import Any, Callable, ClassVar, Generic, Sequence, TypeVar
+from typing import Any, Callable, ClassVar, Generic, TypeVar
 
 
 class TLVType(IntEnum):
@@ -207,7 +207,7 @@ def decode(data: bytes) -> list[TLV[Any]]:
     return values
 
 
-def encode(values: Sequence[TLV[Any]]) -> bytes:
+def encode(*values: TLV[Any]) -> bytes:
     """
     Encode the provided values to bytes.
 

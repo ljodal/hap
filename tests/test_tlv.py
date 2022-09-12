@@ -43,7 +43,7 @@ def test_tlv_decode(data: str, expected: list[tlv.TLV[Any]]) -> None:
 
 
 @pytest.mark.parametrize(
-    "expected,data",
+    "expected,values",
     CASES
     + (
         (
@@ -54,8 +54,8 @@ def test_tlv_decode(data: str, expected: list[tlv.TLV[Any]]) -> None:
     ),
     ids=CASE_IDS + ("values with explicit separator",),
 )
-def test_tlv_encode(data: list[tlv.TLV[Any]], expected: str) -> None:
-    decoded = tlv.encode(data).hex()
+def test_tlv_encode(values: list[tlv.TLV[Any]], expected: str) -> None:
+    decoded = tlv.encode(*values).hex()
     assert decoded == expected
 
 

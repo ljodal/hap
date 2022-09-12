@@ -5,7 +5,7 @@ from hap.backends.base import TypeManager
 from hap.backends.memory import MemoryBackend
 
 
-def test_file_backend(accessory: Accessory, type_manager: TypeManager) -> None:
+def test_memory_backend(accessory: Accessory, type_manager: TypeManager) -> None:
 
     backend = MemoryBackend()
 

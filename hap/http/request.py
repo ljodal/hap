@@ -1,44 +1,31 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
-from urllib.parse import parse_qs
 
 from .. import tlv
-from ..crypto import srp
-from .asgi import HTTPScope
+from ..crypto.srp import Server as SRPServer
 
 
 @dataclass
+class Session:
+    srp: SRPServer | None = None
+
+
+@dataclass(kw_only=True)
 class Request:
-    scope: HTTPScope
+    method: str
+    path: str
     body: bytes
+    query: dict[str, list[str]] = field(default_factory=dict)
+    headers: tuple[tuple[bytes, bytes], ...] = ()
 
-    @property
-    def method(self) -> str:
-        return self.scope["method"]
-
-    @property
-    def path(self) -> str:
-        return self.scope["path"]
-
-    @property
-    def srp_session(self) -> srp.Server | None:
-        # Extract the SRP session from the scope
-        match self.scope["extensions"]:
-            case {"hap": {"srp": srp.Server() as srp_session}}:
-                return srp_session
-
-        return None
-
-    @cached_property
-    def query(self) -> dict[str, list[str]]:
-        return parse_qs(self.scope["query_string"].decode(), keep_blank_values=True)
+    session: Session
 
     @cached_property
     def content_type(self) -> bytes | None:
         return next(
-            (value for key, value in self.scope["headers"] if key == b"content-type"),
+            (value for key, value in self.headers if key == b"content-type"),
             None,
         )
 

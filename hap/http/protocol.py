@@ -1,27 +1,25 @@
 import asyncio
-from urllib.parse import unquote
+import logging
+from urllib.parse import parse_qs, unquote
 
 import h11
 
-from ..crypto.srp import SRP
-from .asgi import (
-    ASGIApplication,
-    ASGIReceiveEvent,
-    ASGISendEvent,
-    HTTPRequestEvent,
-    HTTPScope,
-)
+from .app import App
+from .request import Request, Session
+
+logger = logging.getLogger(__name__)
 
 
 class HTTPProtocol(asyncio.Protocol):
     transport: asyncio.WriteTransport
     connection: h11.Connection
 
-    def __init__(self, asgi_app: ASGIApplication) -> None:
-        self.app = asgi_app
-        self.to_app: asyncio.Queue[ASGIReceiveEvent] | None = None
+    def __init__(self, app: App) -> None:
+        self.app = app
         self.app_task: asyncio.Task[None] | None = None
-        self.srp: SRP | None = None
+        self.request: h11.Request | None = None
+        self.data: list[h11.Data] = []
+        self.session = Session()
 
     # Protocol interface
 
@@ -50,82 +48,72 @@ class HTTPProtocol(asyncio.Protocol):
     # h11/asgi event processing
 
     def process_events(self) -> None:
+        # Do not process incoming events if we're already processing a request
+        if self.app_task:
+            return
+
         try:
             while True:
                 event = self.connection.next_event()
                 if event in (h11.NEED_DATA, h11.PAUSED):
                     break
                 if isinstance(event, h11.Request):
-                    self.request_received(event)
+                    assert not self.request
+                    assert not self.data
+                    self.request = event
                 elif isinstance(event, h11.Data):
-                    assert self.to_app
-                    self.to_app.put_nowait(
-                        HTTPRequestEvent(
-                            type="http.request", body=event.data, more_body=True
-                        )
-                    )
+                    self.data.append(event)
                 elif isinstance(event, (h11.ConnectionClosed, h11.EndOfMessage)):
-                    if self.to_app:
-                        self.to_app.put_nowait(
-                            HTTPRequestEvent(
-                                type="http.request", body=b"", more_body=False
-                            )
-                        )
+                    if self.request:
+                        self.app_task = asyncio.ensure_future(self.process_request())
                     break
                 else:
-                    print(f"Unsupported event: {event}")
-                    break
+                    raise RuntimeError(f"Unsupported event: {event}")
         except h11.RemoteProtocolError:
             print("Remote protocol error, closing connection")
             self.transport.close()
 
-    def request_received(self, request: h11.Request) -> None:
-        self.to_app = asyncio.Queue()
-        path, _, query_string = request.target.partition(b"?")
-        scope = HTTPScope(
-            type="http",
-            asgi={"version": "3.0", "spec_version": "2.3"},
-            http_version=request.http_version.decode(),
-            method=request.method.decode(),
-            scheme="http",
-            path=unquote(path.decode("ascii")),
-            raw_path=request.target,
-            query_string=query_string,
-            root_path="",
-            headers=request.headers,
-            client=None,
-            server=None,
-            extensions={
-                "hap": {"is_secure": False, "srp": self.srp},
-            },
-        )
-        self.app_task = asyncio.ensure_future(
-            self.app(scope, self.to_app.get, self.app_send)
+    async def process_request(self) -> None:
+        print("Process request")
+        assert self.request
+        path, _, query_string = self.request.target.partition(b"?")
+        request = Request(
+            method=self.request.method.decode(),
+            path=unquote(path.decode()),
+            query=parse_qs(query_string.decode(), keep_blank_values=True),
+            headers=tuple(self.request.headers),
+            body=b"".join(data.data for data in self.data),
+            session=self.session,
         )
 
-    async def app_send(self, event: ASGISendEvent) -> None:
-        if self.transport.is_closing():
-            print(f"Received event {event} after transport was closed")
+        print("Calling app")
+        try:
+            response = await self.app(request)
+        except Exception:
+            # TODO: Return 500 internal error
+            logger.exception("Error while processing request")
             return
 
-        if event["type"] == "http.response.start":
-            self.transport.write(
-                self.connection.send(
-                    h11.Response(
-                        status_code=event["status"],
-                        headers=[
-                            (key.decode(), value.decode())
-                            for key, value in event["headers"]
-                        ],
-                    )
-                )
+        print("Writing response")
+
+        if data := self.connection.send(
+            h11.Response(
+                status_code=response.status,
+                headers=[(b"content-type", response.content_type)],
             )
-        elif event["type"] == "http.response.body":
-            self.transport.write(self.connection.send(h11.Data(event["body"])))
-            if not event["more_body"]:
-                print("No more body, resetting connection")
-                self.connection.start_next_cycle()
-        elif event["type"] == "hap.srp":
-            self.srp = event["srp"]
-        else:
-            raise ValueError(f"Unsupported ASGI event: {event['type']}")
+        ):
+            self.transport.write(data)
+        if data := self.connection.send(h11.Data(response.body)):
+            self.transport.write(data)
+        if data := self.connection.send(h11.EndOfMessage()):
+            self.transport.write(data)
+        self.connection.start_next_cycle()
+
+        print("Wrote response")
+
+        # Make sure we process any pending events
+        asyncio.get_running_loop().call_soon(self.process_events)
+
+        self.request = None
+        self.data = []
+        self.app_task = None

@@ -1,6 +1,7 @@
 from typing import Any
 
 from .accessories import Accessory, Characteristic, Service
+from .backends import Backend
 
 
 class AccessoryServer:
@@ -8,8 +9,9 @@ class AccessoryServer:
     HAP accessory server that exposes a collection of accessories
     """
 
-    def __init__(self) -> None:
+    def __init__(self, backend: Backend) -> None:
         self.accessories: list[Accessory] = []
+        self.backend = backend
 
     def add_accessory(self, accessory: Accessory) -> None:
         """ """

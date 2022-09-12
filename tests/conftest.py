@@ -15,6 +15,10 @@ from hap.accessories import (
 )
 from hap.backends.base import TypeManager
 
+pytest.register_assert_rewrite("tests.fixtures")
+
+from .fixtures import Client  # noqa: E402
+
 
 @pytest.fixture
 def get_instance_id() -> Callable[[], int]:
@@ -51,3 +55,12 @@ def accessory(service: Service) -> Accessory:
 @pytest.fixture
 def type_manager() -> TypeManager:
     return TypeManager()
+
+
+@pytest.fixture
+def client() -> Client:
+    """
+    Get a simple HTTP client that can communicate with an accessory server.
+    """
+
+    return Client()

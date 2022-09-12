@@ -33,8 +33,8 @@ class JSONResponse(Response):
         )
 
 
-class PairingResponse(Response):
+class TLVResponse(Response):
     def __init__(self, *values: tlv.TLV[Any], status: int = 200) -> None:
         super().__init__(
-            tlv.encode(values), status=status, content_type=b"application/pairing+tlv8"
+            tlv.encode(*values), status=status, content_type=b"application/pairing+tlv8"
         )
