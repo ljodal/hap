@@ -85,7 +85,13 @@ async def handle_connection(
     while True:
         event = await next_event()
         if isinstance(event, h11.Request):
+            logger.info("Request received: %s", event)
             await handle_request(event)
+        elif isinstance(event, h11.ConnectionClosed):
+            logger.info("Connection closed")
+            break
+        else:
+            logger.warning("Unexpected event received: %s", event)
 
 
 async def serve(*, host: str = "127.0.0.1", port: int = 8080) -> None:
@@ -98,4 +104,5 @@ async def serve(*, host: str = "127.0.0.1", port: int = 8080) -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     asyncio.run(serve())
