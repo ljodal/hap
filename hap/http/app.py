@@ -9,7 +9,7 @@ from .api import HANDLERS
 from .request import Request
 from .response import Response
 
-RESPONSE_404 = Response(status=404, body=b"", content_type=b"text/plain")
+RESPONSE_404 = Response(status=404, body=b"", content_type="text/plain")
 
 
 class App:

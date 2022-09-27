@@ -36,12 +36,12 @@ def get_instance_id() -> Callable[[], int]:
 def service(get_instance_id: Callable[[], int]) -> Service:
     return Service.from_spec(
         AccessoryInformation(
-            FirmwareRevision("0.0.1"),  # type: ignore[arg-type]
+            FirmwareRevision("0.0.1"),
             Identify(),
-            Manufacturer("Drugis Corp."),  # type: ignore[arg-type]
-            Model("Test model"),  # type: ignore[arg-type]
-            Name("Test name"),  # type: ignore[arg-type]
-            SerialNumber("123"),  # type: ignore[arg-type]
+            Manufacturer("Drugis Corp."),
+            Model("Test model"),
+            Name("Test name"),
+            SerialNumber("123"),
         ),
         get_instance_id,
     )

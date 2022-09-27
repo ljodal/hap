@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Callable, Generic, Iterable, NamedTuple, TypeVar
+from typing import Any, Callable, Generic, Iterable, TypeVar
 from uuid import UUID
+
+from typing_extensions import NamedTuple
 
 T = TypeVar("T")
 Number = int | float
@@ -25,7 +27,7 @@ class Permission(str, Enum):
     WRITE_RESPONSE = "wr"
 
 
-class _CharacteristicType(NamedTuple):
+class CharacteristicType(NamedTuple, Generic[T]):
     """
     A specification of a characteristic, whithout any actual data.
     """
@@ -41,11 +43,9 @@ class _CharacteristicType(NamedTuple):
     min_step: Number | None = None
     max_length: int | None = None
     max_data_length: int | None = None
-    valid_values: tuple[T, ...] | None = None  # type: ignore[valid-type]
-    valid_values_range: tuple[T, T] | None = None  # type: ignore[valid-type]
+    valid_values: tuple[T, ...] | None = None
+    valid_values_range: tuple[T, T] | None = None
 
-
-class CharacteristicType(_CharacteristicType, Generic[T]):
     def __str__(self) -> str:
         if self.description:
             return f"{self.uuid} ({self.description})"
@@ -58,14 +58,12 @@ class CharacteristicType(_CharacteristicType, Generic[T]):
         self,
         initial_value: T | None = None,
         event_notifications_enabled: bool = False,
-    ) -> CharacteristicSpec[T]:  # type: ignore[misc]
+    ) -> CharacteristicSpec[T]:
         """
         Define a characteristic spec. The returned spec is immutable and can be reused.
         """
 
-        return CharacteristicSpec(
-            self, initial_value, event_notifications_enabled  # type: ignore[arg-type]
-        )
+        return CharacteristicSpec(self, initial_value, event_notifications_enabled)
 
 
 class ServiceType(NamedTuple):
@@ -78,8 +76,8 @@ class ServiceType(NamedTuple):
 
     uuid: UUID
     name: str
-    required_characteristics: tuple[CharacteristicType[Any], ...]  # type: ignore[misc]
-    optional_characteristics: tuple[CharacteristicType[Any], ...]  # type: ignore[misc]
+    required_characteristics: tuple[CharacteristicType[Any], ...]
+    optional_characteristics: tuple[CharacteristicType[Any], ...]
 
     def __str__(self) -> str:
         return self.name
@@ -89,7 +87,7 @@ class ServiceType(NamedTuple):
 
     def __call__(
         self,
-        *characteristics: CharacteristicSpec[Any],  # type: ignore[misc]
+        *characteristics: CharacteristicSpec[Any],
         primary: bool = False,
         hidden: bool = False,
     ) -> ServiceSpec:
@@ -136,19 +134,15 @@ class ServiceType(NamedTuple):
 # types.
 
 
-class _CharacteristicSpec(NamedTuple):
-    type: CharacteristicType[T]  # type: ignore[valid-type, misc]
-    initial_value: T | None  # type: ignore[valid-type]
+class CharacteristicSpec(NamedTuple, Generic[T]):
+    type: CharacteristicType[T]
+    initial_value: T | None
     event_notifications_enabled: bool
-
-
-class CharacteristicSpec(_CharacteristicSpec, Generic[T]):
-    pass
 
 
 class ServiceSpec(NamedTuple):
     type: ServiceType
-    characteristics: tuple[CharacteristicSpec[Any], ...]  # type: ignore[misc]
+    characteristics: tuple[CharacteristicSpec[Any], ...]
     primary: bool
     hidden: bool
 
@@ -170,7 +164,7 @@ class Characteristic(Generic[T]):
     def __init__(
         self,
         iid: int,
-        type: CharacteristicType[T],  # type: ignore[misc]
+        type: CharacteristicType[T],
         event_notifications_enabled: bool,
         initial_value: T | None,
     ) -> None:
@@ -184,7 +178,7 @@ class Characteristic(Generic[T]):
     @classmethod
     def from_spec(
         cls,
-        spec: CharacteristicSpec[Any],  # type: ignore[misc]
+        spec: CharacteristicSpec[Any],
         get_instance_id: Callable[[], int],
     ) -> Characteristic[Any]:
         return Characteristic(
@@ -278,14 +272,14 @@ class Service:
             and other.primary == self.primary
         )
 
-    def __getitem__(self, key: CharacteristicType[T]) -> Characteristic[T]:  # type: ignore[misc]
+    def __getitem__(self, key: CharacteristicType[T]) -> Characteristic[T]:
         if char := next(
             (char for char in self.characteristics if char.type == key), None
         ):
             return char
         raise KeyError(f'Service as no "{key}" characteristic')
 
-    def __setitem__(self, key: CharacteristicType[T], value: T) -> None:  # type: ignore[misc]
+    def __setitem__(self, key: CharacteristicType[T], value: T) -> None:
         characteristic: Characteristic[T] = self[key]
         characteristic.value = value
 

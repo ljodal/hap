@@ -53,6 +53,4 @@ def define_tlv_class(ctx: DynamicClassDefContext, *, generic_type: str) -> None:
 
 
 def plugin(version: str) -> type[BugFixPlugin] | None:
-    if version == "0.960":
-        return BugFixPlugin
-    return None
+    return BugFixPlugin

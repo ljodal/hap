@@ -26,7 +26,7 @@ class TypeManager:
             if isinstance(service, ServiceType)
         }
 
-    def get_characteristic(self, uuid: str | UUID) -> CharacteristicType[Any]:  # type: ignore[misc]
+    def get_characteristic(self, uuid: str | UUID) -> CharacteristicType[Any]:
         if isinstance(uuid, str):
             uuid = UUID(uuid)
         return self.characteristics[uuid]

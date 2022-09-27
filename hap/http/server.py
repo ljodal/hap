@@ -135,10 +135,10 @@ async def handle_connection(
         await maybe_send_error(
             status=e.error_status_hint, body=b"Unexpected data received"
         )
-    except asyncio.TimeoutError as e:
+    except asyncio.TimeoutError:
         logger.info("Timeout error, closing connection")
         await maybe_send_error(status=408, body=b"Timeout")
-    except Exception as e:
+    except Exception:
         logger.exception("An error occured")
         await maybe_send_error(status=500, body=b"An error occured")
     finally:

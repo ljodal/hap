@@ -9,7 +9,7 @@ def test_current_temperature() -> None:
 
 
 def test_current_temperature_initial_value() -> None:
-    char_spec = CurrentTemperature(initial_value=20)  # type: ignore[arg-type]
+    char_spec = CurrentTemperature(initial_value=20)
     assert char_spec.type is CurrentTemperature
     assert char_spec.initial_value == 20
     assert char_spec.event_notifications_enabled is False

@@ -91,7 +91,7 @@ def generate_characteristics(characteristics: list[dict[str, Any]]) -> dict[str,
 
         uuid_to_const[uuid] = const_name
 
-        def to_value(value: str) -> Any:
+        def to_value(value: str, format: str = format) -> Any:
             if format in ("uint8", "uint16", "uint32", "uint64", "int", "int32"):
                 return int(value)
             if format == "float":
