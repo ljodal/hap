@@ -28,7 +28,7 @@ def define_tlv_class(ctx: DynamicClassDefContext, *, generic_type: str) -> None:
 
     # The returned class should inherit from hap.tlv.TLV, so get that
     tlv_node = ctx.api.lookup_fully_qualified_or_none("hap.tlv.TLV")
-    assert tlv_node
+    assert tlv_node and isinstance(tlv_node.node, TypeInfo)
     tlv_info = tlv_node.node
 
     # 1) Look up the generic type (int, bytes, str)
@@ -36,7 +36,7 @@ def define_tlv_class(ctx: DynamicClassDefContext, *, generic_type: str) -> None:
     # 3) Set tye typevars on the instance to the generic type
     generic = ctx.api.named_type(generic_type)
     assert generic
-    tlv_base = fill_typevars(tlv_info)  # type: ignore
+    tlv_base = fill_typevars(tlv_info)
     assert isinstance(tlv_base, Instance)
     tlv_base.args = (generic,)
 
@@ -44,7 +44,7 @@ def define_tlv_class(ctx: DynamicClassDefContext, *, generic_type: str) -> None:
     class_def.fullname = ctx.api.qualified_name(ctx.name)
 
     info = TypeInfo(SymbolTable(), class_def, ctx.api.cur_mod_id)
-    info.mro = [info, tlv_info, ctx.api.named_type("builtins.object").type]  # type: ignore
+    info.mro = [info, tlv_info, ctx.api.named_type("builtins.object").type]
     info.bases = [tlv_base]
 
     class_def.info = info

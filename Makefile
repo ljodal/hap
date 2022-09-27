@@ -6,7 +6,7 @@ black:
 
 .PHONY: mypy
 mypy:
-	mypy --show-error-codes hap tests bin/*
+	mypy hap tests bin/*
 
 .PHONY: isort
 isort:
